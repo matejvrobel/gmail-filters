@@ -1,0 +1,38 @@
+# ==========================================
+# GMAIL FILTERS CONFIGURATION (TEMPLATE)
+# ==========================================
+# Instructions: Rename or copy this file to 'filters.yaml' 
+# and fill in your actual credentials and filters.
+#
+# Search criteria (Multiple items in a list are joined by 'OR'):
+#   from:    Sender's email address, name, or domain (e.g., @hella.com)
+#   to:      Recipient's email address
+#   subject: Keywords to search for in the email subject
+#   text:    Keywords to search for in the email body
+#
+# Actions (Overrides defaults if specified under a label):
+#   archive:   [true/false] Remove from Inbox (true) or keep in Inbox (false)
+#   mark_read: [true/false] Mark email as read (true) or keep unread (false)
+#   star:      [true/false] Add a star to the email (true) or no star (false)
+# ==========================================
+
+credentials:
+  email: "your_email@gmail.com"
+  app_password: "your_app_password_here"
+
+defaults:
+  archive: true
+  mark_read: false
+  star: false
+
+labels:
+  Example-Label:
+    archive: true
+    mark_read: false
+    star: false
+    subject:
+      - "example keyword"
+    from:
+      - "sender@example.com"
+    text:
+      - "some text"
