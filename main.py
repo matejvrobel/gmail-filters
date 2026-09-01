@@ -94,16 +94,17 @@ def run_idle():
             server.idle()
             
             while True:
-                responses = server.idle_check(timeout=30)
-                if responses:
+                try:
+                    responses = server.idle_check(timeout=30)
+                    if responses:
+                        server.idle_done()
+                        time.sleep(10)
+                        filters_config = load_filters(filters_file)
+                        process_emails(server, filters_config)
+                        server.idle()
+                except Exception as idle_err:
                     server.idle_done()
-                    
-                    time.sleep(1)
-                    
-                    filters_config = load_filters(filters_file)
-                    process_emails(server, filters_config)
-                    
-                    server.idle()
+                    raise idle_err
                     
         except Exception as e:
             print(f"Error: {e}. Reconnecting...")
