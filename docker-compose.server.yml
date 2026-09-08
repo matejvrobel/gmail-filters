@@ -8,4 +8,4 @@ services:
     environment:
       FILTERS_PATH: /config/filters.yaml
     volumes:
-      - ./config:/config
+      - ./gmail-filters/config:/config
