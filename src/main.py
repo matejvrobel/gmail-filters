@@ -123,6 +123,13 @@ def process_emails(server, filters_config):
         log.info("Pass complete — processed %d message(s) total", total_matched)
 
 
+def config_mtime(filepath):
+    try:
+        return filepath.stat().st_mtime
+    except OSError:
+        return None
+
+
 def run_idle():
     filters_file = Path(
         os.environ.get("FILTERS_PATH", Path(__file__).parent.resolve() / "filters.yaml")
@@ -140,6 +147,7 @@ def run_idle():
                 continue
 
             filters_config = load_filters(filters_file)
+            last_mtime = config_mtime(filters_file)
             creds = filters_config.get("credentials", {})
             email_user = creds.get("email")
             app_password = creds.get("app_password")
@@ -166,16 +174,41 @@ def run_idle():
             while True:
                 try:
                     responses = server.idle_check(timeout=30)
+                    mtime = config_mtime(filters_file)
+                    config_changed = mtime is not None and mtime != last_mtime
+
+                    if not responses and not config_changed:
+                        log.debug("IDLE heartbeat (no new mail)")
+                        continue
+
                     if responses:
                         log.info("IDLE wake-up: %s", responses)
-                        server.idle_done()
+                    if config_changed:
+                        log.info("Config changed — reloading %s", filters_file)
+
+                    server.idle_done()
+                    if responses:
                         time.sleep(10)
-                        filters_config = load_filters(filters_file)
-                        process_emails(server, filters_config)
-                        log.info("Re-entering IDLE...")
-                        server.idle()
-                    else:
-                        log.debug("IDLE heartbeat (no new mail)")
+
+                    new_config = load_filters(filters_file)
+                    last_mtime = config_mtime(filters_file)
+                    new_creds = new_config.get("credentials", {})
+                    new_email = new_creds.get("email")
+                    new_password = new_creds.get("app_password")
+
+                    if not credentials_ready(new_email, new_password):
+                        raise RuntimeError("Invalid credentials after config reload")
+
+                    if (new_email, new_password) != (email_user, app_password):
+                        log.info("Credentials changed — reconnecting")
+                        break
+
+                    filters_config = new_config
+                    email_user = new_email
+                    app_password = new_password
+                    process_emails(server, filters_config)
+                    log.info("Re-entering IDLE...")
+                    server.idle()
                 except Exception as idle_err:
                     try:
                         server.idle_done()
