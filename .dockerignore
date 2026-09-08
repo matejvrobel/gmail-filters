@@ -1,0 +1,12 @@
+.venv
+venv
+.git
+.gitignore
+.dockerignore
+__pycache__
+*.pyc
+.env
+.vscode
+.cursor
+filters.yaml
+**/filters.yaml

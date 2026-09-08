@@ -1,8 +1,8 @@
 # ==========================================
 # GMAIL FILTERS CONFIGURATION (TEMPLATE)
 # ==========================================
-# Instructions: Rename or copy this file to 'filters.yaml' 
-# and fill in your actual credentials and filters.
+# On first Docker start this file is copied to ./config/filters.yaml
+# (mounted at /config/filters.yaml). Fill in credentials there — not here.
 #
 # Search criteria (Multiple items in a list are joined by 'OR'):
 #   from:    Sender's email address, name, or domain (e.g., @hella.com)

@@ -1,5 +1,7 @@
+import os
 import time
 from pathlib import Path
+
 import yaml
 from imapclient import IMAPClient
 
@@ -70,8 +72,9 @@ def process_emails(server, filters_config):
                 server.expunge()
 
 def run_idle():
-    script_dir = Path(__file__).parent.resolve()
-    filters_file = script_dir / "filters.yaml"
+    filters_file = Path(
+        os.environ.get("FILTERS_PATH", Path(__file__).parent.resolve() / "filters.yaml")
+    )
     
     while True:
         try:

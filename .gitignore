@@ -1,1 +1,10 @@
 filters.yaml
+config/
+
+.venv
+venv
+__pycache__
+*.pyc
+.env
+.vscode
+.cursor

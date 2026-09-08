@@ -1,0 +1,9 @@
+services:
+  gmail-filters:
+    build: .
+    container_name: gmail-filters
+    restart: unless-stopped
+    environment:
+      FILTERS_PATH: /config/filters.yaml
+    volumes:
+      - ./config:/config
