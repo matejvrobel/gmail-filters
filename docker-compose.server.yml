@@ -1,8 +1,8 @@
-# Local development — builds from this repo
+# Use this stack in Dockge / on the server (no git clone needed).
+# Image is published by GitHub Actions to GHCR.
 services:
   gmail-filters:
-    build: .
-    image: ghcr.io/matejvrobel/gmail-filters:local
+    image: ghcr.io/matejvrobel/gmail-filters:latest
     container_name: gmail-filters
     restart: unless-stopped
     environment:
