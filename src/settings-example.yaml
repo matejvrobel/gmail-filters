@@ -31,6 +31,8 @@ runtime:
   auth_backoff_max_seconds: 300
   # When filtering.enabled is false, how often to re-check settings
   disabled_poll_seconds: 30
+  # Full inbox filter pass even without new mail (0 = off). Safety net for missed IDLE events.
+  periodic_scan_seconds: 1800
 
 logging:
   level: INFO

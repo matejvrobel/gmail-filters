@@ -87,6 +87,8 @@ def parse_app_settings(raw):
             30, _as_int(runtime.get("auth_backoff_max_seconds"), 300)
         ),
         "disabled_poll_seconds": max(5, _as_int(runtime.get("disabled_poll_seconds"), 30)),
+        # 0 = disabled; full inbox filter pass on this interval even without IDLE wake-ups
+        "periodic_scan_seconds": max(0, _as_int(runtime.get("periodic_scan_seconds"), 1800)),
         "log_level": level,
         "body_peek_bytes": max(0, _as_int(logging_cfg.get("body_peek_bytes"), 2000)),
     }
@@ -615,11 +617,19 @@ def run_idle():
             session_folder = app["imap_folder"]
 
             process_emails(server, filters_config, body_peek_bytes=app["body_peek_bytes"])
+            last_scan_at = time.monotonic()
 
-            log.info(
-                "Entering IDLE (timeout=%ds, waiting for new mail)...",
-                app["idle_timeout_seconds"],
-            )
+            if app["periodic_scan_seconds"] > 0:
+                log.info(
+                    "Entering IDLE (timeout=%ds; periodic scan every %ds)...",
+                    app["idle_timeout_seconds"],
+                    app["periodic_scan_seconds"],
+                )
+            else:
+                log.info(
+                    "Entering IDLE (timeout=%ds, waiting for new mail)...",
+                    app["idle_timeout_seconds"],
+                )
             server.idle()
 
             while True:
@@ -633,8 +643,17 @@ def run_idle():
                     filters_changed = (
                         filters_mtime is not None and filters_mtime != last_filters_mtime
                     )
+                    due_periodic = (
+                        app["periodic_scan_seconds"] > 0
+                        and (time.monotonic() - last_scan_at) >= app["periodic_scan_seconds"]
+                    )
 
-                    if not responses and not settings_changed and not filters_changed:
+                    if (
+                        not responses
+                        and not settings_changed
+                        and not filters_changed
+                        and not due_periodic
+                    ):
                         log.debug("IDLE heartbeat (no new mail)")
                         continue
 
@@ -644,6 +663,11 @@ def run_idle():
                         log.info("Settings changed — reloading %s", settings_file)
                     if filters_changed:
                         log.info("Filters changed — reloading %s", filters_file)
+                    if due_periodic and not responses and not settings_changed and not filters_changed:
+                        log.info(
+                            "Periodic inbox scan (every %ds)",
+                            app["periodic_scan_seconds"],
+                        )
 
                     server.idle_done()
                     if responses and app["new_mail_settle_seconds"] > 0:
@@ -682,6 +706,7 @@ def run_idle():
                     process_emails(
                         server, filters_config, body_peek_bytes=app["body_peek_bytes"]
                     )
+                    last_scan_at = time.monotonic()
                     log.info("Re-entering IDLE...")
                     server.idle()
                 except Exception as idle_err:
