@@ -1,4 +1,5 @@
 filters.yaml
+settings.yaml
 config/
 
 .venv

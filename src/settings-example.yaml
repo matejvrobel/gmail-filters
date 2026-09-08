@@ -1,0 +1,38 @@
+# ==========================================
+# APPLICATION SETTINGS (TEMPLATE)
+# ==========================================
+# Copied to ./config/settings.yaml on first Docker start
+# (mounted at /config/settings.yaml).
+#
+# filtering.enabled: MASTER SWITCH for the whole filter loop.
+# Default is false so a fresh install does nothing until you opt in.
+# ==========================================
+
+credentials:
+  email: "your_email@gmail.com"
+  app_password: "your_app_password_here"
+
+filtering:
+  enabled: false
+
+imap:
+  host: imap.gmail.com
+  folder: INBOX
+
+runtime:
+  # IDLE heartbeat — also how often config files are checked while idle
+  idle_timeout_seconds: 30
+  # Wait after new-mail IDLE wake-up before searching (Gmail indexing settle)
+  new_mail_settle_seconds: 10
+  reconnect_delay_seconds: 10
+  missing_config_retry_seconds: 30
+  invalid_credentials_retry_seconds: 60
+  auth_backoff_initial_seconds: 30
+  auth_backoff_max_seconds: 300
+  # When filtering.enabled is false, how often to re-check settings
+  disabled_poll_seconds: 30
+
+logging:
+  level: INFO
+  # Bytes of message body peeked for match-reason logs
+  body_peek_bytes: 2000

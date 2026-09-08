@@ -6,6 +6,7 @@ services:
     container_name: gmail-filters
     restart: unless-stopped
     environment:
+      SETTINGS_PATH: /config/settings.yaml
       FILTERS_PATH: /config/filters.yaml
     volumes:
       - ./config:/config

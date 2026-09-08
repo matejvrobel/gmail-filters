@@ -2,7 +2,8 @@ FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    FILTERS_PATH=/config/filters.yaml
+    FILTERS_PATH=/config/filters.yaml \
+    SETTINGS_PATH=/config/settings.yaml
 
 WORKDIR /app
 

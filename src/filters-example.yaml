@@ -1,24 +1,35 @@
 # ==========================================
 # GMAIL FILTERS CONFIGURATION (TEMPLATE)
 # ==========================================
-# On first Docker start this file is copied to ./config/filters.yaml
-# (mounted at /config/filters.yaml). Fill in credentials there — not here.
+# Copied to ./config/filters.yaml on first Docker start
+# (mounted at /config/filters.yaml). Credentials live in settings.yaml.
 #
-# Search criteria (Multiple items in a list are joined by 'OR'):
-#   from:    Sender's email address, name, or domain (e.g., @hella.com)
-#   to:      Recipient's email address
-#   subject: Keywords to search for in the email subject
-#   text:    Keywords to search for in the email body
+# Criteria — only via `rules:`
+# --------------------------------
+# Each list item is one rule; rules are joined by OR.
+# Fields inside one rule (from / to / subject / text / query) are joined by AND.
+# String or list both work for field values.
 #
-# Actions (Overrides defaults if specified under a label):
-#   archive:   [true/false] Remove from Inbox (true) or keep in Inbox (false)
-#   mark_read: [true/false] Mark email as read (true) or keep unread (false)
-#   star:      [true/false] Add a star to the email (true) or no star (false)
+# Inside a field list:
+#   - list items → OR
+#   - within one string, ` + ` → AND
+#   - `!term` → AND NOT; `\+` and `\!` escape those characters
+#
+#   text:
+#     - "word + word1 + word2"     # AND
+#     - "word"                     # OR with next items
+#     - "word1"
+#     - "formulaA \+ formulaB"     # literal '+'
+#     - "!spam"                    # exclude
+#     - "\!important"              # literal '!important'
+#
+# `query:` — any raw Gmail search string (escape hatch).
+#
+# Actions (per label, override defaults):
+#   archive:   [true/false] Remove from Inbox
+#   mark_read: [true/false] Mark as read
+#   star:      [true/false] Star message
 # ==========================================
-
-credentials:
-  email: "your_email@gmail.com"
-  app_password: "your_app_password_here"
 
 defaults:
   archive: true
@@ -26,13 +37,37 @@ defaults:
   star: false
 
 labels:
-  Example-Label:
+  Example-Rules:
     archive: true
     mark_read: false
     star: false
-    subject:
-      - "example keyword"
-    from:
-      - "sender@example.com"
-    text:
-      - "some text"
+    rules:
+      # raw Gmail query
+      - query: 'from:@acme.com text:urgent'
+
+      # from AND text
+      - from: ["@partner.com"]
+        text: invoice
+
+      # single-field rules → OR'd with the others
+      - from: bank.example
+      - text: shipment
+
+      # subject A AND B (via +), exclude newsletter
+      - subject:
+          - "invoice + due"
+          - "!newsletter"
+
+      # some mail from vendor.com (subject match) OR all from billing.vendor.com
+      - from:
+          - "@vendor.com"
+        subject:
+          - "invoice"
+          - "receipt"
+      - from:
+          - "@billing.vendor.com"
+
+      # literal + and ! in terms
+      - text:
+          - "C\\+\\+"           # search for C++
+          - "\\!important"     # search for !important
