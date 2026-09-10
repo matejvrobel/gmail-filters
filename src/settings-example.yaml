@@ -31,8 +31,12 @@ runtime:
   auth_backoff_max_seconds: 300
   # When filtering.enabled is false, how often to re-check settings
   disabled_poll_seconds: 30
+  # Abort hung IMAP reads (LIST/SEARCH/idle_done) instead of blocking for hours
+  imap_socket_timeout_seconds: 60
+  # Leave IDLE + NOOP this often (0 = off). Keeps the session alive (~10 min recommended).
+  idle_refresh_seconds: 540
   # Full inbox filter pass even without new mail (0 = off). Safety net for missed IDLE events.
-  periodic_scan_seconds: 1800
+  periodic_scan_seconds: 600
 
 logging:
   level: INFO

@@ -87,8 +87,14 @@ def parse_app_settings(raw):
             30, _as_int(runtime.get("auth_backoff_max_seconds"), 300)
         ),
         "disabled_poll_seconds": max(5, _as_int(runtime.get("disabled_poll_seconds"), 30)),
+        # Socket read/write timeout — prevents multi-hour hangs on dead IMAP TCP sessions
+        "imap_socket_timeout_seconds": max(
+            10, _as_int(runtime.get("imap_socket_timeout_seconds"), 60)
+        ),
+        # Renew IDLE this often (0 = off). IMAPClient recommends ~10 min; Gmail caps ~29 min.
+        "idle_refresh_seconds": max(0, _as_int(runtime.get("idle_refresh_seconds"), 540)),
         # 0 = disabled; full inbox filter pass on this interval even without IDLE wake-ups
-        "periodic_scan_seconds": max(0, _as_int(runtime.get("periodic_scan_seconds"), 1800)),
+        "periodic_scan_seconds": max(0, _as_int(runtime.get("periodic_scan_seconds"), 600)),
         "log_level": level,
         "body_peek_bytes": max(0, _as_int(logging_cfg.get("body_peek_bytes"), 2000)),
     }
@@ -608,28 +614,32 @@ def run_idle():
             )
 
             log.info("Connecting to %s as %s ...", app["imap_host"], email_user)
-            server = IMAPClient(app["imap_host"], use_uid=True)
+            server = IMAPClient(
+                app["imap_host"],
+                use_uid=True,
+                timeout=app["imap_socket_timeout_seconds"],
+            )
             server.login(email_user, app_password)
             server.select_folder(app["imap_folder"])
-            log.info("Connected — %s selected", app["imap_folder"])
+            log.info(
+                "Connected — %s selected (socket timeout=%ds)",
+                app["imap_folder"],
+                app["imap_socket_timeout_seconds"],
+            )
             auth_backoff = app["auth_backoff_initial_seconds"]
             session_host = app["imap_host"]
             session_folder = app["imap_folder"]
 
             process_emails(server, filters_config, body_peek_bytes=app["body_peek_bytes"])
             last_scan_at = time.monotonic()
+            last_idle_refresh_at = time.monotonic()
 
+            idle_bits = [f"timeout={app['idle_timeout_seconds']}s"]
+            if app["idle_refresh_seconds"] > 0:
+                idle_bits.append(f"IDLE refresh every {app['idle_refresh_seconds']}s")
             if app["periodic_scan_seconds"] > 0:
-                log.info(
-                    "Entering IDLE (timeout=%ds; periodic scan every %ds)...",
-                    app["idle_timeout_seconds"],
-                    app["periodic_scan_seconds"],
-                )
-            else:
-                log.info(
-                    "Entering IDLE (timeout=%ds, waiting for new mail)...",
-                    app["idle_timeout_seconds"],
-                )
+                idle_bits.append(f"periodic scan every {app['periodic_scan_seconds']}s")
+            log.info("Entering IDLE (%s)...", "; ".join(idle_bits))
             server.idle()
 
             while True:
@@ -647,12 +657,18 @@ def run_idle():
                         app["periodic_scan_seconds"] > 0
                         and (time.monotonic() - last_scan_at) >= app["periodic_scan_seconds"]
                     )
+                    due_idle_refresh = (
+                        app["idle_refresh_seconds"] > 0
+                        and (time.monotonic() - last_idle_refresh_at)
+                        >= app["idle_refresh_seconds"]
+                    )
 
                     if (
                         not responses
                         and not settings_changed
                         and not filters_changed
                         and not due_periodic
+                        and not due_idle_refresh
                     ):
                         log.debug("IDLE heartbeat (no new mail)")
                         continue
@@ -663,13 +679,34 @@ def run_idle():
                         log.info("Settings changed — reloading %s", settings_file)
                     if filters_changed:
                         log.info("Filters changed — reloading %s", filters_file)
+                    refresh_only = (
+                        due_idle_refresh
+                        and not responses
+                        and not settings_changed
+                        and not filters_changed
+                        and not due_periodic
+                    )
                     if due_periodic and not responses and not settings_changed and not filters_changed:
                         log.info(
                             "Periodic inbox scan (every %ds)",
                             app["periodic_scan_seconds"],
                         )
+                    elif refresh_only:
+                        log.debug(
+                            "Refreshing IDLE (every %ds)",
+                            app["idle_refresh_seconds"],
+                        )
 
                     server.idle_done()
+
+                    if refresh_only:
+                        # Keepalive + detect half-open sockets without a full filter pass.
+                        server.noop()
+                        last_idle_refresh_at = time.monotonic()
+                        log.debug("Re-entering IDLE after refresh...")
+                        server.idle()
+                        continue
+
                     if responses and app["new_mail_settle_seconds"] > 0:
                         time.sleep(app["new_mail_settle_seconds"])
 
@@ -707,6 +744,7 @@ def run_idle():
                         server, filters_config, body_peek_bytes=app["body_peek_bytes"]
                     )
                     last_scan_at = time.monotonic()
+                    last_idle_refresh_at = time.monotonic()
                     log.info("Re-entering IDLE...")
                     server.idle()
                 except Exception as idle_err:
@@ -736,9 +774,24 @@ def run_idle():
                 time.sleep(auth_backoff)
                 auth_backoff = min(auth_backoff * 2, auth_max)
             else:
-                log.exception(
-                    "Error: %s — reconnecting in %ds...", e, reconnect_delay
+                # Socket EOF/timeouts are expected on long-lived IMAP; keep logs short.
+                transient = (
+                    "socket error" in err.lower()
+                    or "timed out" in err.lower()
+                    or "timeout" in err.lower()
+                    or "eof" in err.lower()
+                    or "connection reset" in err.lower()
                 )
+                if transient:
+                    log.warning(
+                        "IMAP connection lost (%s) — reconnecting in %ds...",
+                        e,
+                        reconnect_delay,
+                    )
+                else:
+                    log.exception(
+                        "Error: %s — reconnecting in %ds...", e, reconnect_delay
+                    )
                 time.sleep(reconnect_delay)
         finally:
             if server is not None:
