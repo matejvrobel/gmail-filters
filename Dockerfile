@@ -1,9 +1,12 @@
 FROM python:3.12-slim
 
+ARG GIT_SHA=unknown
+
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     FILTERS_PATH=/config/filters.yaml \
-    SETTINGS_PATH=/config/settings.yaml
+    SETTINGS_PATH=/config/settings.yaml \
+    GIT_SHA=${GIT_SHA}
 
 WORKDIR /app
 

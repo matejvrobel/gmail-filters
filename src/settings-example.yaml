@@ -37,6 +37,8 @@ runtime:
   idle_refresh_seconds: 540
   # Full inbox filter pass even without new mail (0 = off). Safety net for missed IDLE events.
   periodic_scan_seconds: 600
+  # Last resort: exit process if stuck (Docker restarts). 0 = off. Keep > socket timeout.
+  watchdog_seconds: 180
 
 logging:
   level: INFO

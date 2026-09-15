@@ -1,5 +1,6 @@
 import logging
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -15,6 +16,51 @@ log = logging.getLogger("gmail-filters")
 
 PLACEHOLDER_EMAILS = {"your_email@gmail.com"}
 PLACEHOLDER_PASSWORDS = {"your_app_password_here", "xxxx xxxx xxxx xxxx"}
+
+
+class ProgressWatchdog:
+    """
+    Daemon thread that kills the process if the main loop stops making progress.
+
+    Socket timeouts should recover first; this is the last resort so Docker
+    (`restart: unless-stopped`) can bring the container back.
+    """
+
+    def __init__(self, max_silence_seconds):
+        self.max_silence = max(0, int(max_silence_seconds))
+        self._last = time.monotonic()
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = None
+
+    def pet(self):
+        with self._lock:
+            self._last = time.monotonic()
+
+    def start(self):
+        if self.max_silence <= 0:
+            return
+        self.pet()
+        self._thread = threading.Thread(
+            target=self._run, name="imap-watchdog", daemon=True
+        )
+        self._thread.start()
+        log.info("Watchdog armed (exit if no progress for %ds)", self.max_silence)
+
+    def stop(self):
+        self._stop.set()
+
+    def _run(self):
+        while not self._stop.wait(15):
+            with self._lock:
+                silent_for = time.monotonic() - self._last
+            if silent_for >= self.max_silence:
+                log.error(
+                    "Watchdog: no progress for %.0fs (limit %ds) — exiting for Docker restart",
+                    silent_for,
+                    self.max_silence,
+                )
+                os._exit(1)
 
 # Gmail operator prefix; text uses bare terms (body/anywhere search).
 FIELD_PREFIX = {
@@ -95,6 +141,8 @@ def parse_app_settings(raw):
         "idle_refresh_seconds": max(0, _as_int(runtime.get("idle_refresh_seconds"), 540)),
         # 0 = disabled; full inbox filter pass on this interval even without IDLE wake-ups
         "periodic_scan_seconds": max(0, _as_int(runtime.get("periodic_scan_seconds"), 600)),
+        # Hard kill if main thread stalls (0 = off). Should exceed socket timeout.
+        "watchdog_seconds": max(0, _as_int(runtime.get("watchdog_seconds"), 180)),
         "log_level": level,
         "body_peek_bytes": max(0, _as_int(logging_cfg.get("body_peek_bytes"), 2000)),
     }
@@ -449,7 +497,7 @@ def describe_actions(label, archive, mark_read, star):
     return actions
 
 
-def process_emails(server, filters_config, body_peek_bytes=2000):
+def process_emails(server, filters_config, body_peek_bytes=2000, watchdog=None):
     defaults = filters_config.get("defaults", {})
     default_archive = defaults.get("archive", True)
     default_mark_read = defaults.get("mark_read", False)
@@ -459,6 +507,9 @@ def process_emails(server, filters_config, body_peek_bytes=2000):
     total_matched = 0
 
     for label, criteria in labels_config.items():
+        if watchdog is not None:
+            watchdog.pet()
+
         if not isinstance(criteria, dict):
             log.warning("Label %r has invalid config — skipping", label)
             continue
@@ -478,7 +529,11 @@ def process_emails(server, filters_config, body_peek_bytes=2000):
 
         search_query = search_query + " "
         log.debug("Label %r search: %s", label, search_query.strip())
+        if watchdog is not None:
+            watchdog.pet()
         messages = server.gmail_search(search_query, charset="UTF-8")
+        if watchdog is not None:
+            watchdog.pet()
 
         if not messages:
             log.debug("Label %r: no matches for %r", label, search_query.strip())
@@ -557,17 +612,24 @@ def resolve_config_paths():
 
 def run_idle():
     filters_file, settings_file = resolve_config_paths()
+    git_sha = (os.environ.get("GIT_SHA") or "unknown").strip()
     log.info(
-        "Starting gmail-filters; settings=%s filters=%s",
+        "Starting gmail-filters; build=%s settings=%s filters=%s",
+        git_sha,
         settings_file,
         filters_file,
     )
 
     auth_backoff = 30
+    watchdog = None
 
     while True:
         server = None
         try:
+            if watchdog is not None:
+                watchdog.stop()
+                watchdog = None
+
             if not settings_file.is_file():
                 log.error("Settings file not found: %s", settings_file)
                 time.sleep(30)
@@ -630,9 +692,18 @@ def run_idle():
             session_host = app["imap_host"]
             session_folder = app["imap_folder"]
 
-            process_emails(server, filters_config, body_peek_bytes=app["body_peek_bytes"])
+            watchdog = ProgressWatchdog(app["watchdog_seconds"])
+            watchdog.start()
+
+            process_emails(
+                server,
+                filters_config,
+                body_peek_bytes=app["body_peek_bytes"],
+                watchdog=watchdog,
+            )
             last_scan_at = time.monotonic()
             last_idle_refresh_at = time.monotonic()
+            watchdog.pet()
 
             idle_bits = [f"timeout={app['idle_timeout_seconds']}s"]
             if app["idle_refresh_seconds"] > 0:
@@ -645,6 +716,7 @@ def run_idle():
             while True:
                 try:
                     responses = server.idle_check(timeout=app["idle_timeout_seconds"])
+                    watchdog.pet()
                     settings_mtime = config_mtime(settings_file)
                     filters_mtime = config_mtime(filters_file)
                     settings_changed = (
@@ -698,17 +770,20 @@ def run_idle():
                         )
 
                     server.idle_done()
+                    watchdog.pet()
 
                     if refresh_only:
                         # Keepalive + detect half-open sockets without a full filter pass.
                         server.noop()
                         last_idle_refresh_at = time.monotonic()
+                        watchdog.pet()
                         log.debug("Re-entering IDLE after refresh...")
                         server.idle()
                         continue
 
                     if responses and app["new_mail_settle_seconds"] > 0:
                         time.sleep(app["new_mail_settle_seconds"])
+                        watchdog.pet()
 
                     app = parse_app_settings(load_yaml(settings_file))
                     apply_log_level(app["log_level"])
@@ -741,10 +816,14 @@ def run_idle():
                     email_user = new_email
                     app_password = new_password
                     process_emails(
-                        server, filters_config, body_peek_bytes=app["body_peek_bytes"]
+                        server,
+                        filters_config,
+                        body_peek_bytes=app["body_peek_bytes"],
+                        watchdog=watchdog,
                     )
                     last_scan_at = time.monotonic()
                     last_idle_refresh_at = time.monotonic()
+                    watchdog.pet()
                     log.info("Re-entering IDLE...")
                     server.idle()
                 except Exception as idle_err:
@@ -755,6 +834,9 @@ def run_idle():
                     raise idle_err
 
         except Exception as e:
+            if watchdog is not None:
+                watchdog.stop()
+                watchdog = None
             err = str(e)
             try:
                 retry_app = parse_app_settings(load_yaml(settings_file))
@@ -794,6 +876,9 @@ def run_idle():
                     )
                 time.sleep(reconnect_delay)
         finally:
+            if watchdog is not None:
+                watchdog.stop()
+                watchdog = None
             if server is not None:
                 try:
                     server.logout()
